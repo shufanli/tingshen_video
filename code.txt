@@ -1,0 +1,292 @@
+# -*- coding = utf-8 -*-
+import random
+from bs4 import BeautifulSoup  # 网页解析，获取数据
+import re  # 正则表达式，进行文字匹配`
+import xlwt  # 进行excel操作
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver import ActionChains
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.chrome.service import Service
+import sys
+import time
+import os, shutil
+import urllib.request, urllib.error, requests
+import socket
+
+m3u8 = []
+# 创建正则表达式对象，标售规则影片详情链接的规则
+findLink = re.compile(r'href="(.*?)"')
+print("启动程序前若jixie_url表格、video_m3u8表格已被打开，请关闭")
+print("正在连接到浏览器... ")
+options = webdriver.ChromeOptions()
+options.add_experimental_option("debuggerAddress", "127.0.0.1:9999")  # 获取已经打开的chrome
+path = Service("C:\Program Files\Google\Chrome\Application\chromedriver.exe")
+options.add_argument('blink-settings=imagesEnable=false')
+browser_base = webdriver.Chrome(service=path, options=options)
+print("连接成功！")
+
+# 爬取网页地址
+def get_url():
+    num = 0
+    try:
+        title = input('请输入搜索关键词: ')
+        begin_time = input('输入起始时间，格式为20xx-xx-xx: ')
+        end_time = input('输入截止时间，格式为20xx-xx-xx: ')
+    except IOError:
+        print("输入错误，程序结束")
+        sys.exit()
+    data = []  # 保存一条视频链接
+    url_list = []
+    for i in range(1,10000000):
+        base_url = 'https://tingshen.court.gov.cn/search/advance/common/more?dataType=&title='+title+'&caseNo=&caseCause=&courtName=&courtCode=&beginTime='+begin_time+'&endTime='+end_time+'&judge=&cbr=&party=&pageNumber='+str(i)+'&pageSize=15'
+        browser_base.get(base_url)
+        browser_base.implicitly_wait(3)
+
+        script = 'Object.defineProperty(navigator, "webdriver", {get: () => false,});'
+        browser_base.execute_script(script)
+        time.sleep(1)
+
+        count_url = 0
+        web_url = browser_base.page_source  # 获取模拟地址
+        soup = BeautifulSoup(web_url, "html.parser")
+        for case in soup.find_all('div',class_='info-top'):  # 查找符合要求的字符串
+            count_url = count_url+1
+            case = str(case)
+            link = re.findall(findLink, case)[0]  # 通过正则表达式查找
+            data.append("https://tingshen.court.gov.cn"+link)
+            num = num + 1
+        print('已收集链接数', num)
+        url_list.append(data)
+        if count_url == 0:
+            break
+    return url_list, num
+
+
+# 保存获取的视频网页地址
+def save_url(data_list, upper):
+    book = xlwt.Workbook(encoding="utf-8", style_compression=0)  # 创建workbook对象
+    sheet = book.add_sheet("庭审视频链接", cell_overwrite_ok=True)  # 创建工作表
+    sheet.write(0, 0, "链接")
+    for i in range(0, upper):
+        sheet.write(i + 1, 0, data_list[0][i])
+    save_path = 'jixie_url.xls'
+    try:
+        book.save(save_path)  # 保存
+    except Exception:
+        print('检测到jixie_url文件已被打开，请关闭后再试')
+        sys.exit()
+    print("已将收集到的链接保存至"+save_path)
+
+# 保存获取的m3u8地址
+def save_m3u8(data_list, upper):
+    book = xlwt.Workbook(encoding="utf-8", style_compression=0)  # 创建workbook对象
+    sheet = book.add_sheet("m3u8格式列表", cell_overwrite_ok=True)  # 创建工作表
+    sheet.write(0, 0, "链接")
+    for n in range(0, upper):
+        sheet.write(n + 1, 0, data_list[n])
+    save_path = 'video_m3u8.xls'
+    try:
+        book.save(save_path)  # 保存
+    except Exception:
+        print('检测到video_m3u8文件已被打开，请关闭后再试')
+        sys.exit()
+    print('已成功保存m3u8文件地址至'+save_path)
+
+# 滑块模拟拖动
+def slider_move(video_url):
+    browser_base.get(video_url)
+    browser_base.implicitly_wait(3)
+    slider_url = browser_base.page_source
+    soup = BeautifulSoup(slider_url, "html.parser")
+    info = soup.find_all('p')[0].text
+
+    if info == "为保证您的正常访问，请进行如下验证： ":
+        print("识别到滑块，正在拖动...")
+        slider = WebDriverWait(browser_base, 5).until(EC.presence_of_element_located((By.ID, 'nc_1_n1z'))) # 定位滑块
+        trace = []  # 创建存放轨迹信息的列表
+        distance = 257  # 设置一共要运行的距离
+        faster_distance = distance * (4 / 7)  # 设置加速距离
+        start, v0, t = 0, 20, 0.5  # 设置初始位置、初始速度、时间间隔
+        # 当尚未移动到终点时
+        while start < distance:
+            if start < faster_distance:
+                a = random.randint(10,30)
+            else:
+                a = random.randint(-30,-10)
+            move = v0*t+0.5*a*t*t
+            v = v0+a*t
+            v0 = v
+            start += move
+            trace.append(round(move))
+        print('滑块移动距离:',trace)
+        # 按住滑块
+        ActionChains(browser_base).click_and_hold(slider).perform()
+        for x in trace:
+            # 使用move_by_offset()方法拖动滑块，perform()方法用于执行
+            ActionChains(browser_base).move_by_offset(xoffset=x, yoffset=0).perform()
+        time.sleep(2)
+        ActionChains(browser_base).release().perform()
+        time.sleep(2)
+
+        if info == "为保证您的正常访问，请进行如下验证： ":
+            print("滑块拖动失败，请复制网址，另开一个网页将其打开，再重新运行程序！")
+            sys.exit()
+        else:
+            print("Succeed to move")
+            return browser_base
+
+
+# 获取m3u8格式
+def get_m3u8(url):
+    slider_move(url)
+    time.sleep(3)
+    m3u8 = []
+    url_text = ''
+    iframe = browser_base.find_element(By.ID, "player")
+    browser_base.switch_to.frame(iframe)
+    frame_html = browser_base.page_source  # 获取模拟地址
+    soup = BeautifulSoup(frame_html, "html.parser")
+    try:
+        url_text = soup.find_all(type="text/javascript")[1].text
+        # print(url_text)
+        re_url = re.findall("url: '.+", url_text)
+        # print(re_url)
+        # print(re_url[0][6:])
+        if 'http' in re_url[0]:
+            m3u8.append(re_url[0][6:-2])
+        else:
+            m3u8.append('https:'+re_url[0][6:-2])
+        # print(m3u8)
+    except Exception:
+        print("未知错误")
+        print(url_text)
+    print(m3u8)
+    return m3u8
+
+# 打开并读取网页内容
+def getUrlData(url):
+    fails = 0
+    while True:
+        try:
+            if fails > 2:
+                return -1
+            urlData = urllib.request.urlopen(url, timeout=20)  # .read().decode('utf-8', 'ignore')
+            print(urlData)
+            return urlData
+        except Exception:
+            fails += 1
+            print('网络连接出现问题，正在尝试再次请求',fails)
+            time.sleep(2)
+
+
+# 下载文件-urllib.request
+def getDown_urllib(url, file_path):
+    socket.setdefaulttimeout(10)
+    try:
+        urllib.request.urlretrieve(url, filename=file_path)
+        return True
+    except socket.timeout:
+        count = 1
+        while count <= 5:
+            try:
+                urllib.request.urlretrieve(url, filename=file_path)
+                break
+            except socket.timeout:
+                count = count+1
+                err_info = '下载失败，再次下载'
+                print(err_info + str(count))
+                if count > 5:
+                    print('下载失败')
+                    return -1
+
+    except urllib.error.URLError as e:
+        # hasattr(e, 'code')，判断e 是否有.code属性，因为不确定是不是HTTPError错误，URLError包含HTTPError，但是HTTPError以外的错误是不返回错误码(状态码)的
+        if hasattr(e, 'code'):
+            print(e.code)  # 打印服务器返回的错误码（状态码），如403，404,501之类的
+        elif hasattr(e, 'reason'):
+            print(e.reason)  # 打印错误原因
+
+
+def getVideo_urllib(url_m3u8, path, videoName):
+    print('m3u8链接已保存完毕，开始下载！')
+    # urlData = getUrlData(url_m3u8).readlines()
+    urlData = getUrlData(url_m3u8)
+    if urlData != -1:
+        Video_num = 0
+        tempName_video = os.path.join(path, f'{videoName}.ts')  # f'{}' 相当于'{}'.format() 或 '%s'%videoName
+        # print(urlData)
+        for line in urlData:
+            # 解码，由于是直接使用了所抓取的链接内容，所以需要按行解码，如果提前解码则不能使用直接进行for循环，会报错
+            # 改用上面的readlines()或readline()也可以，但更繁琐些，同样需要按行解码，效率更低
+            print("已打开m3u8地址，正在解码...")
+            url_ts = line.decode('utf-8')
+            tempName_ts = os.path.join(path, f'{Video_num}.ts')  # f'{}' 相当于'{}'.format()
+            if not '.ts' in url_ts:
+                continue
+            else:
+                if not url_ts.startswith('http'):  # 判断字符串是否以'http'开头，如果不是则说明url链接不完整，需要拼接
+                    # 拼接ts流视频的url
+                    url_ts = url_m3u8.replace(url_m3u8.split('/')[-1], url_ts)
+            download_status = getDown_urllib(url_ts, tempName_ts)  # 下载视频流
+            if download_status == -1:
+                break
+            if Video_num == 0:
+                # 重命名，已存在则自动覆盖
+                shutil.move(tempName_ts, tempName_video)
+                Video_num += 1
+                continue
+            cmd = f'copy /b {tempName_video}+{tempName_ts} {tempName_video}'
+            res = os.system(cmd)
+            if res == 0:
+                os.system(f'del {tempName_ts}')
+                '''
+                if Video_num == 50:  # 限制下载的ts流个数，这个视频挺长有四百多个.ts文件，所以限制一下
+                    break
+                '''
+                Video_num += 1
+                continue
+            print(f'wrong, copy {Video_num}.ts-->{videoName}.ts failure')
+            return False
+    else:
+        return -1
+    os.system(f'del {path}/*.ts')  # 调用windows命令行（即cmd）工具，运行命令
+    filename = os.path.join(path, f'{videoName}.mp4')
+    shutil.move(tempName_video, filename)
+    print(f'{videoName}.mp4 finish down!')
+
+
+def main():
+    m3u8_list = []
+    url_list, num = get_url() # 加载count次页面并获取视频地址，存入url_list中
+    save_url(data_list=url_list, upper=num)
+    if num == 0:
+        print('未找到视频，或因滑块链接访问失败，请复制链接，重新打开一个网页打开，后重新自动程序！')
+        sys.exit()
+    for j in range(0, num):
+        print(url_list[0][j])
+        try:
+            m3u8_list.append(get_m3u8(url_list[0][j]))
+            print("已成功收集"+str(j+1)+"个m3u8文件到列表")
+        except Exception:
+            print('因滑块链接访问失败，请复制链接，重新打开一个网页打开，后重新自动程序！')
+            sys.exit()
+    print(m3u8_list)
+    save_m3u8(m3u8_list, num)
+    for k in range(0, num):
+        mp4_download_path = r'D:\PyProjects\pest_video\m3u8_mp4'
+        isExists = os.path.exists(mp4_download_path)
+        if not isExists:
+            os.mkdir(mp4_download_path)
+        mp4_Name = m3u8_list[k][0].split('/')[-2]
+        status = getVideo_urllib(m3u8_list[k][0], mp4_download_path, mp4_Name)
+        if status == -1:
+            print('本条下载失败')
+            continue
+        print("已成功转换 ", str(k+1))
+
+if __name__ == "__main__":  # 当程序执行时
+    main()
+
+
